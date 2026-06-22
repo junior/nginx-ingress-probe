@@ -22,6 +22,11 @@ spec:
         app: nginx-ingress-probe
     spec:
       serviceAccountName: nginx-ingress-probe
+      # For a private registry (e.g. Artifactory), create a pull secret and reference it:
+      #   kubectl create secret docker-registry artifactory \
+      #     --docker-server=artifactory.example.com --docker-username=… --docker-password=…
+      # imagePullSecrets:
+      #   - name: artifactory
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -29,6 +34,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: probe
+          # Replace with your private image, e.g.
+          #   artifactory.example.com/docker-local/nginx-ingress-probe:0.1.0
           image: ghcr.io/junior/nginx-ingress-probe:latest
           ports:
             - containerPort: 8080

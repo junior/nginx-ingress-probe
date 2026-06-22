@@ -5,8 +5,9 @@ metadata:
   labels:
     app: nginx-ingress-probe
 spec:
-  # Uses the cluster's default IngressClass for portability. If your cluster has no
-  # default, set `ingressClassName:` to match your controller (nginx, etc.).
+  # Route through the NGINX Plus Ingress Controller you want to test by setting its
+  # IngressClass (often "nginx"). Omit ingressClassName to use the cluster default.
+  # ingressClassName: nginx
   rules:
     - host: probe.example.com
       http:

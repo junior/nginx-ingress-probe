@@ -126,7 +126,7 @@
     </section>
 
     <section class="card">
-      <h2>⚙ NGINX Plus</h2>
+      <h2>⚙ NGINX Plus Ingress Controller</h2>
       {{if .Plus.Enabled}}
         {{if .Plus.Error}}
         <p class="muted">API error.<br>{{.Plus.Error}}</p>
@@ -159,7 +159,7 @@
         {{end}}
         {{end}}
       {{else}}
-      <p class="muted">Set <code>NGINX_PLUS_API_URL</code> to the NGINX Plus API (e.g. the ingress controller's <code>/api</code>) to show its version, build, and cache zones here.</p>
+      <p class="muted">Set <code>NGINX_PLUS_API_URL</code> to the NGINX Plus Ingress Controller's API to show its nginx version, build, and cache zones here.</p>
       {{end}}
     </section>
 
