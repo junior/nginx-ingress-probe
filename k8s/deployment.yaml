@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nginx-ingress-probe
+  labels:
+    app: nginx-ingress-probe
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-ingress-probe
+  labels:
+    app: nginx-ingress-probe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-ingress-probe
+  template:
+    metadata:
+      labels:
+        app: nginx-ingress-probe
+    spec:
+      serviceAccountName: nginx-ingress-probe
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: probe
+          image: ghcr.io/junior/nginx-ingress-probe:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            - name: HOST_IP
+              valueFrom: { fieldRef: { fieldPath: status.hostIP } }
+            - name: POD_SERVICE_ACCOUNT
+              valueFrom: { fieldRef: { fieldPath: spec.serviceAccountName } }
+            # --- Optional: point at the NGINX Plus API to show its version + cache zones ---
+            # The NGINX Plus ingress controller exposes the API (commonly on :8080/api).
+            # - name: NGINX_PLUS_API_URL
+            #   value: "http://nginx-ingress.nginx-ingress.svc:8080/api"
+            # - name: NGINX_PLUS_API_INSECURE   # only if it serves a self-signed cert
+            #   value: "true"
+            # --- Optional: surface arbitrary facts (NIM / controller versions, …) ---
+            # - name: PROBE_FACT_NIM_Version
+            #   value: "2.18.0"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+            limits: { cpu: "100m", memory: "32Mi" }
