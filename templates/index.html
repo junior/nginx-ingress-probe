@@ -49,7 +49,8 @@
   td.v{font-family:var(--mono)}
   tr.fwd td.k{color:var(--accent);font-weight:600}
   tr.fwd{background:var(--accent-weak)}
-  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+  .tag{display:inline-block;white-space:nowrap;font-family:var(--mono);font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+  td.state{white-space:nowrap}
   .tag.cold{color:var(--warn-text);border-color:var(--warn-border);background:var(--warn-bg)}
   .tag.warm{color:var(--accent);border-color:var(--accent);background:var(--accent-weak)}
   footer{color:var(--muted);font-size:12px;margin-top:28px;text-align:center}
@@ -149,7 +150,7 @@
               <td class="v">{{.Name}}</td>
               <td class="v">{{.Size}}</td>
               <td class="v">{{.MaxSize}}</td>
-              <td>{{if .Cold}}<span class="tag cold">cold</span>{{else}}<span class="tag warm">warm</span>{{end}}</td>
+              <td class="state">{{if .Cold}}<span class="tag cold">cold</span>{{else}}<span class="tag warm">warm</span>{{end}}</td>
             </tr>
           {{end}}
           </tbody>
@@ -160,6 +161,39 @@
         {{end}}
       {{else}}
       <p class="muted">Set <code>NGINX_PLUS_API_URL</code> to the NGINX Plus Ingress Controller's API to show its nginx version, build, and cache zones here.</p>
+      {{end}}
+    </section>
+
+    <section class="card">
+      <h2>📈 Prometheus</h2>
+      {{if .Prom.Enabled}}
+        {{if .Prom.Error}}
+        <p class="muted">Query error.<br>{{.Prom.Error}}</p>
+        <p class="muted">Endpoint: {{.Prom.APIBase}}</p>
+        {{else if or .Prom.Controller .Prom.Caches .Prom.Traffic}}
+          {{if .Prom.Controller}}
+          <dl>
+            {{range .Prom.Controller}}<dt>{{.Name}}</dt><dd>{{.Value}}</dd>{{end}}
+          </dl>
+          {{end}}
+          {{if .Prom.Caches}}
+          <table style="margin-top:14px">
+            <thead><tr><th>Cache zone</th><th>Used</th><th>Max</th></tr></thead>
+            <tbody>
+            {{range .Prom.Caches}}<tr><td class="v">{{.Name}}</td><td class="v">{{.Size}}</td><td class="v">{{.MaxSize}}</td></tr>{{end}}
+            </tbody>
+          </table>
+          {{end}}
+          {{if .Prom.Traffic}}
+          <dl style="margin-top:14px">
+            {{range .Prom.Traffic}}<dt>{{.Name}}</dt><dd>{{.Value}}</dd>{{end}}
+          </dl>
+          {{end}}
+        {{else}}
+        <p class="muted">Connected, but none of the expected NGINX metrics are present — is the controller's <code>-enable-prometheus-metrics</code> on and scraped?</p>
+        {{end}}
+      {{else}}
+      <p class="muted">Set <code>PROMETHEUS_URL</code> to pull the controller's live metrics (version, reload status, caches, traffic) from Prometheus — no RBAC needed.</p>
       {{end}}
     </section>
 

@@ -1,7 +1,7 @@
 // nginx-ingress-probe — a tiny diagnostics page to verify an NGINX (Plus) ingress
 // after an upgrade. Deploy it behind the ingress, open it, and it shows the request
 // the ingress forwarded, the Kubernetes version, and (optionally) the NGINX Plus API
-// data (version, build, cache zones). Single static binary, standard library only.
+// data and Prometheus metrics. Single static binary, standard library only.
 package main
 
 import (
@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"sort"
@@ -48,6 +49,7 @@ type pageData struct {
 	Facts     []KV        `json:"facts"`
 	Kube      kubeInfo    `json:"kubernetes"`
 	Plus      plusInfo    `json:"nginx_plus"`
+	Prom      promInfo    `json:"prometheus"`
 	Demo      bool        `json:"demo"`
 	Generated string      `json:"generated"`
 }
@@ -99,6 +101,15 @@ type plusInfo struct {
 	Caches  []cacheZone `json:"caches"`
 }
 
+type promInfo struct {
+	Enabled    bool        `json:"enabled"`
+	Error      string      `json:"error,omitempty"`
+	APIBase    string      `json:"api_base,omitempty"`
+	Controller []KV        `json:"controller"`
+	Caches     []cacheZone `json:"caches"`
+	Traffic    []KV        `json:"traffic"`
+}
+
 type nginxStatus struct {
 	Version       string `json:"version"`
 	Build         string `json:"build"`
@@ -136,6 +147,7 @@ func collect(r *http.Request) pageData {
 		Facts:     collectFacts(),
 		Kube:      collectKube(ctx),
 		Plus:      collectPlus(ctx),
+		Prom:      collectProm(ctx),
 		Generated: time.Now().Format("2006-01-02 15:04:05 MST"),
 	}
 	if demoMode() {
@@ -312,6 +324,132 @@ func collectPlus(ctx context.Context) plusInfo {
 	return out
 }
 
+// collectProm pulls the controller's live metrics from Prometheus (no RBAC — the probe
+// is just a read-only HTTP consumer; Prometheus already did the scraping). Each row
+// renders only if its query returns data, so it degrades gracefully per-metric.
+func collectProm(ctx context.Context) promInfo {
+	base := strings.TrimRight(os.Getenv("PROMETHEUS_URL"), "/")
+	if base == "" {
+		return promInfo{Enabled: false}
+	}
+	out := promInfo{Enabled: true, APIBase: base}
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		InsecureSkipVerify: os.Getenv("PROMETHEUS_INSECURE") == "true", //nolint:gosec // opt-in for self-signed Prometheus
+		MinVersion:         tls.VersionTLS12,
+	}}}
+	token := os.Getenv("PROMETHEUS_TOKEN")
+	q := func(query string) []promSample {
+		rs, _ := promQuery(ctx, client, base, token, query)
+		return rs
+	}
+
+	// Build info doubles as the connectivity check — its error (not its emptiness) is surfaced.
+	rs, err := promQuery(ctx, client, base, token, "nginx_ingress_controller_build_info")
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	if len(rs) > 0 {
+		m := rs[0].Metric
+		if v := m["version"]; v != "" {
+			out.Controller = append(out.Controller, KV{"Controller version", v})
+		}
+		if g := m["git_commit"]; g != "" {
+			if len(g) > 12 {
+				g = g[:12]
+			}
+			out.Controller = append(out.Controller, KV{"Git commit", g})
+		}
+	}
+	if rs := q("nginx_ingress_controller_nginx_last_reload_status"); len(rs) > 0 {
+		status := "failing"
+		if rs[0].Value == "1" {
+			status = "OK"
+		}
+		out.Controller = append(out.Controller, KV{"Last config reload", status})
+	}
+	if rs := q("sum(nginx_ingress_controller_nginx_reloads_total)"); len(rs) > 0 {
+		out.Controller = append(out.Controller, KV{"Reloads", promInt(rs[0].Value)})
+	}
+
+	sizes, maxes := map[string]int64{}, map[string]int64{}
+	for _, r := range q("nginxplus_cache_size") {
+		sizes[r.Metric["cache"]] = promBytes(r.Value)
+	}
+	for _, r := range q("nginxplus_cache_max_size") {
+		maxes[r.Metric["cache"]] = promBytes(r.Value)
+	}
+	zones := map[string]bool{}
+	for n := range sizes {
+		zones[n] = true
+	}
+	for n := range maxes {
+		zones[n] = true
+	}
+	names := make([]string, 0, len(zones))
+	for n := range zones {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		out.Caches = append(out.Caches, cacheZone{Name: n, Size: humanBytes(sizes[n]), MaxSize: maxSize(maxes[n])})
+	}
+
+	if rs := q("sum(rate(nginxplus_http_requests_total[5m]))"); len(rs) > 0 {
+		out.Traffic = append(out.Traffic, KV{"Requests/sec", promFloat(rs[0].Value)})
+	}
+	if rs := q("sum(nginxplus_connections_active)"); len(rs) > 0 {
+		out.Traffic = append(out.Traffic, KV{"Active connections", promInt(rs[0].Value)})
+	}
+	return out
+}
+
+type promSample struct {
+	Metric map[string]string
+	Value  string
+}
+
+func promQuery(ctx context.Context, c *http.Client, base, token, query string) ([]promSample, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/v1/query?query="+url.QueryEscape(query), nil)
+	req.Header.Set("Accept", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Prometheus returned %s", resp.Status)
+	}
+	var body struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+		Data   struct {
+			Result []struct {
+				Metric map[string]string `json:"metric"`
+				Value  []json.RawMessage `json:"value"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	if body.Status != "success" {
+		return nil, fmt.Errorf("Prometheus query failed: %s", body.Error)
+	}
+	out := make([]promSample, 0, len(body.Data.Result))
+	for _, r := range body.Data.Result {
+		s := promSample{Metric: r.Metric}
+		if len(r.Value) == 2 {
+			_ = json.Unmarshal(r.Value[1], &s.Value)
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 func demoMode() bool {
 	switch strings.ToLower(os.Getenv("PROBE_DEMO")) {
 	case "1", "true", "yes":
@@ -320,9 +458,8 @@ func demoMode() bool {
 	return false
 }
 
-// applyDemo fills sample Kubernetes / NGINX Plus values for local previews and
-// screenshots when there is no cluster. It is clearly flagged in the UI so it is
-// never mistaken for live data.
+// applyDemo fills sample values for local previews and screenshots when there is no
+// cluster. It is clearly flagged in the UI so it is never mistaken for live data.
 func applyDemo(d *pageData) {
 	d.Demo = true
 	if !d.Kube.Available {
@@ -342,6 +479,24 @@ func applyDemo(d *pageData) {
 			Caches: []cacheZone{
 				{Name: "static_cache", Size: "128.0 MiB", MaxSize: "512.0 MiB", Cold: false},
 				{Name: "api_cache", Size: "4.0 MiB", MaxSize: "256.0 MiB", Cold: true},
+			},
+		}
+	}
+	if !d.Prom.Enabled || d.Prom.Error != "" {
+		d.Prom = promInfo{
+			Enabled: true, APIBase: "http://prometheus-operated.monitoring.svc:9090 (demo)",
+			Controller: []KV{
+				{"Controller version", "v4.0.1"},
+				{"Git commit", "a1b2c3d4e5f6"},
+				{"Last config reload", "OK"},
+				{"Reloads", "7"},
+			},
+			Caches: []cacheZone{
+				{Name: "static_cache", Size: "128.0 MiB", MaxSize: "512.0 MiB"},
+			},
+			Traffic: []KV{
+				{"Requests/sec", "42.17"},
+				{"Active connections", "18"},
 			},
 		}
 	}
@@ -380,6 +535,21 @@ func maxSize(n int64) string {
 		return "unlimited"
 	}
 	return humanBytes(n)
+}
+
+// Prometheus values arrive as strings holding a float; these coerce them for display.
+func promBytes(s string) int64 { f, _ := strconv.ParseFloat(s, 64); return int64(f) }
+func promInt(s string) string {
+	f, _ := strconv.ParseFloat(s, 64)
+	return strconv.FormatInt(int64(f), 10)
+}
+
+func promFloat(s string) string {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return s
+	}
+	return strconv.FormatFloat(f, 'f', 2, 64)
 }
 
 func tlsVersion(v uint16) string {

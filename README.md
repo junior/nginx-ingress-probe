@@ -22,6 +22,9 @@ static Go binary, standard library only, distroless and non-root.
 - **NGINX Plus Ingress Controller** — set `NGINX_PLUS_API_URL` to the controller's NGINX Plus
   API and it pulls `/nginx` (nginx version, build, generation, PID) and `/http/caches` (cache
   zones: used vs. max, cold/warm). This is the data plane you just upgraded.
+- **Prometheus** — set `PROMETHEUS_URL` and it queries the controller's live metrics with **no
+  RBAC**: controller version + git commit, last config-reload status, cache zone sizes, and
+  request rate / active connections. Each row shows only if that metric is being scraped.
 - **Facts** — any `PROBE_FACT_*` env var, for things the data-plane API doesn't expose — the
   **controller (NIC) version**, **NGINX Instance Manager (NIM) version**, etc.
 
@@ -92,6 +95,8 @@ Point it at the controller's NGINX Plus API to see the upgraded nginx version + 
 | `PORT` | `8080` | listen port |
 | `NGINX_PLUS_API_URL` | — | the controller's NGINX Plus API base; enables the version + cache-zone card |
 | `NGINX_PLUS_API_INSECURE` | `false` | skip TLS verification for a self-signed Plus API |
+| `PROMETHEUS_URL` | — | Prometheus base URL; pulls the controller's live metrics (version, reload, caches, traffic) — no RBAC |
+| `PROMETHEUS_TOKEN` · `PROMETHEUS_INSECURE` | — | bearer auth / skip TLS verify for a secured Prometheus |
 | `PROBE_FACT_*` | — | each becomes a row in the **Facts** card (e.g. `PROBE_FACT_NIM_Version`) |
 | `PROBE_DEMO` | `false` | fill sample K8s / controller values for local previews (clearly flagged) |
 

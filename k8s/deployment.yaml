@@ -58,6 +58,11 @@ spec:
             #   value: "http://nginx-ingress.nginx-ingress.svc:8080/api"
             # - name: NGINX_PLUS_API_INSECURE   # only if it serves a self-signed cert
             #   value: "true"
+            # --- Optional: pull the controller's live metrics from Prometheus (no RBAC) ---
+            # - name: PROMETHEUS_URL
+            #   value: "http://prometheus-operated.monitoring.svc:9090"
+            # - name: PROMETHEUS_TOKEN          # only if your Prometheus requires bearer auth
+            #   valueFrom: { secretKeyRef: { name: prometheus, key: token } }
             # --- Optional: surface arbitrary facts (NIM / controller versions, …) ---
             # - name: PROBE_FACT_NIM_Version
             #   value: "2.18.0"
