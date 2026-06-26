@@ -51,6 +51,7 @@ type pageData struct {
 	Plus      plusInfo    `json:"nginx_plus"`
 	Prom      promInfo    `json:"prometheus"`
 	Demo      bool        `json:"demo"`
+	Author    *authorInfo `json:"author,omitempty"`
 	Generated string      `json:"generated"`
 }
 
@@ -149,6 +150,9 @@ func collect(r *http.Request) pageData {
 		Plus:      collectPlus(ctx),
 		Prom:      collectProm(ctx),
 		Generated: time.Now().Format("2006-01-02 15:04:05 MST"),
+	}
+	if brandEnabled() {
+		d.Author = &authorInfo{Name: "Adao Oliveira Jr", URL: "https://adao.dev"}
 	}
 	if demoMode() {
 		applyDemo(&d)
@@ -448,6 +452,22 @@ func promQuery(ctx context.Context, c *http.Client, base, token, query string) (
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// brandEnabled reports whether to show the "by adao.dev" credit in the footer and
+// /api/info. On by default; set PROBE_BRAND=off (or 0/false/no) to remove it — handy
+// for internal/corporate deployments.
+func brandEnabled() bool {
+	switch strings.ToLower(os.Getenv("PROBE_BRAND")) {
+	case "off", "0", "false", "no":
+		return false
+	}
+	return true
+}
+
+type authorInfo struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 func demoMode() bool {

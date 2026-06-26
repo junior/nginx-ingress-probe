@@ -119,4 +119,4 @@ make lint
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE) — built by [Adao Oliveira Jr](https://adao.dev).
